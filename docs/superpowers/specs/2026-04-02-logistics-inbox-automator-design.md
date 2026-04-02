@@ -11,7 +11,7 @@
 Build a backend service that:
 
 1. Processes new unread mail from a shared Gmail inbox.
-2. Classifies each email into exactly one of seven categories (see §4).
+2. Classifies each email into exactly one of seven categories (see §3).
 3. Applies the matching Gmail nested label under `5u/`.
 4. Sends a thread reply (except `not_relevant`) that is professional, references the original subject, and stays in the same Gmail thread.
 5. Treats each Gmail thread as one **session**; follow-ups reuse session context from persisted history.
@@ -19,15 +19,7 @@ Build a backend service that:
 
 ---
 
-## 2. Non-goals (this slice)
-
-- Bonus: sessions visualization UI.
-- Bonus: containerization.
-- HTTP endpoint to trigger polling (see §6).
-
----
-
-## 3. Stack (constraints)
+## 2. Stack (constraints)
 
 | Area | Choice |
 |------|--------|
@@ -40,7 +32,7 @@ Build a backend service that:
 
 ---
 
-## 4. Classification categories
+## 3. Classification categories
 
 Exactly one label per inbound message:
 
@@ -58,17 +50,17 @@ Exactly one label per inbound message:
 
 ---
 
-## 5. Architecture overview
+## 4. Architecture overview
 
 - **FastAPI:** Health, session query APIs (`GET /sessions`, `GET /sessions/{id}`), optional OAuth callback if using a web OAuth flow.
 - **SQLite:** Sessions (by `gmail_thread_id`), emails, classifications, reply/outbound records, processing status for observability and retries.
 - **Gmail integration module:** List/fetch messages, create/apply labels, send replies in-thread.
 - **Agno:** Two separate agent definitions (or one module with two entrypoints) backing the two LLM calls.
-- **Dramatiq:** Two actors with a thin **cron-driven CLI** that lists work and enqueues actor 1 (see §7).
+- **Dramatiq:** Two actors with a thin **cron-driven CLI** that lists work and enqueues actor 1 (see §6).
 
 ---
 
-## 6. Scheduling: cron, not HTTP poll
+## 5. Scheduling: cron, not HTTP poll
 
 - **Do not** expose a public/internal HTTP route whose purpose is “poll inbox now.”
 - **Host cron** (or equivalent) runs a **CLI entrypoint**, e.g. `python -m app.cli poll-inbox`, which:
@@ -79,7 +71,7 @@ Workers run separately (`dramatiq` CLI) per project conventions.
 
 ---
 
-## 7. Two-actor pipeline
+## 6. Two-actor pipeline
 
 ### Actor 1 — `classify_inbound` (name exact in code TBD)
 
@@ -114,7 +106,7 @@ Workers run separately (`dramatiq` CLI) per project conventions.
 
 ---
 
-## 8. Data model (SQLite)
+## 7. Data model (SQLite)
 
 Minimum entities:
 
@@ -127,16 +119,16 @@ Minimum entities:
 
 ---
 
-## 9. APIs (FastAPI)
+## 8. APIs (FastAPI)
 
 - `GET /sessions` — list sessions (pagination optional).
 - `GET /sessions/{id}` — session detail with ordered messages and linked classification (and reply status).
 
-No poll trigger endpoint (§6).
+No poll trigger endpoint (§5).
 
 ---
 
-## 10. Error handling and idempotency
+## 9. Error handling and idempotency
 
 - **Unique constraint** on `gmail_message_id` to prevent duplicate processing.
 - **Per-message isolation:** failure on one message should not abort the entire cron batch (implementation uses try/except and logging per message).
@@ -145,14 +137,14 @@ No poll trigger endpoint (§6).
 
 ---
 
-## 11. Testing (slice)
+## 10. Testing (slice)
 
 - Unit tests: category → **label name** mapping; parsing/normalization of structured LLM output (mocked).
 - Optional: mock Gmail client for one integration-style test of the pipeline orchestration.
 
 ---
 
-## 12. Open decisions for implementation plan
+## 11. Open decisions for implementation plan
 
 - Exact Gmail query for “new unread” vs. incremental `history` API (slice may use `is:unread` + processed flag).
 - OAuth: desktop/installed flow script vs. FastAPI callback — either acceptable if token is persisted securely.
@@ -160,6 +152,6 @@ No poll trigger endpoint (§6).
 
 ---
 
-## 13. Summary
+## 12. Summary
 
 **Cron → CLI → enqueue Actor 1.** Actor 1 classifies, **writes DB**, applies label, enqueues Actor 2. Actor 2 drafts (LLM) and sends except for `not_relevant`. FastAPI exposes **read** APIs for sessions/threads. Broker starts minimal; **Redis** documented as production upgrade.
