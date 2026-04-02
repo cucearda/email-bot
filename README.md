@@ -1,10 +1,10 @@
 # Logistics Inbox Automator
 
-Backend service from [`CHALLENGE.md`](CHALLENGE.md): Gmail polling (via cron + CLI), Agno + Claude classification and reply drafting, SQLite persistence, Dramatiq workers.
+Backend service from [`CHALLENGE.md`](CHALLENGE.md): Gmail polling (via cron + CLI), Agno + Claude classification and reply drafting, SQLite persistence, Dramatiq actors (in-memory broker today).
 
 ## Setup
 
-1. Python 3.12+ and [Redis](https://redis.io/) (Dramatiq broker). For example: `redis-server` on `127.0.0.1:6379`.
+1. Python 3.12+
 
 2. Create a virtualenv and install:
 
@@ -18,7 +18,6 @@ Backend service from [`CHALLENGE.md`](CHALLENGE.md): Gmail polling (via cron + C
    - `GMAIL_CREDENTIALS_PATH` — default `./credentials.json` (OAuth client secret JSON from Google Cloud).
    - `GMAIL_TOKEN_PATH` — default `./token.json` (written by `gmail-auth`).
    - `DATABASE_URL` — default `sqlite:///./inbox_automator.db`.
-   - `REDIS_URL` — default `redis://127.0.0.1:6379/0`.
    - `AGNO_CLAUDE_MODEL` — default `claude-sonnet-4-5-20250929` (structured outputs).
 
 4. Gmail OAuth (once):
@@ -41,25 +40,21 @@ uvicorn app.main:app --reload
 - `GET /sessions`
 - `GET /sessions/{id}`
 
-**Worker** (processes `classify_inbound` and `draft_and_send_reply`):
-
-```bash
-dramatiq app.workers.tasks
-```
-
-**Cron** (enqueue unread inbox messages; no HTTP poll endpoint):
+**Cron** — processes unread inbox mail **in-process** (no Redis, no separate worker):
 
 ```bash
 * * * * * cd /path/to/project && /path/to/venv/bin/python -m app.cli poll-inbox
 ```
 
-Ensure the worker process is running so jobs are consumed.
+### Future: Redis + background workers
+
+To scale out, switch `app/workers/broker_setup.py` to `RedisBroker`, change `_enqueue_draft` in `app/service/pipeline.py` to use `draft_and_send_reply.send(email_id)`, add the `redis` extra to `pyproject.toml`, run `dramatiq app.workers.tasks`, and have cron enqueue via `classify_inbound.send(...)` instead of calling `run_classify_inbound` directly.
 
 ## Project layout
 
 - `app/agents/` — Agno agents (classification + reply).
 - `app/integrations/gmail/` — Gmail API client.
-- `app/workers/tasks.py` — Dramatiq actors.
+- `app/workers/tasks.py` — Dramatiq actors (for future Redis).
 - `app/service/pipeline.py` — shared pipeline logic.
 
 ## Security

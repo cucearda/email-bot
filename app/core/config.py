@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./inbox_automator.db"
     gmail_credentials_path: str = "./credentials.json"
     gmail_token_path: str = "./token.json"
-    redis_url: str = "redis://127.0.0.1:6379/0"
     anthropic_api_key: str = ""
     agno_claude_model: str = "claude-sonnet-4-5-20250929"
 

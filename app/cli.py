@@ -20,17 +20,17 @@ def cmd_gmail_auth() -> None:
 
 
 def cmd_poll_inbox() -> None:
-    from app.workers.tasks import classify_inbound
+    from app.service.pipeline import run_classify_inbound
 
     settings = get_settings()
     gmail = GmailClient(settings)
     ids = gmail.list_unread_message_ids(max_results=50)
-    logger.info("Enqueue classify_inbound for %d message(s)", len(ids))
+    logger.info("Processing %d unread message(s) (inline, no Redis)", len(ids))
     for mid in ids:
         try:
-            classify_inbound.send(mid)
+            run_classify_inbound(mid)
         except Exception:
-            logger.exception("Failed to enqueue %s", mid)
+            logger.exception("Failed to process %s", mid)
 
 
 def main(argv: list[str] | None = None) -> int:

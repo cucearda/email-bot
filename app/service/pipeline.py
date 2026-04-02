@@ -25,9 +25,8 @@ def _utcnow() -> datetime:
 
 
 def _enqueue_draft(email_id: int) -> None:
-    from app.workers.tasks import draft_and_send_reply
-
-    draft_and_send_reply.send(email_id)
+    """Run reply step inline (no Redis). Swap to ``draft_and_send_reply.send`` when using Redis."""
+    run_draft_and_send_reply(email_id)
 
 
 def _thread_context_for_db(db: Session, session_id: int, before_email_id: int | None) -> str:
