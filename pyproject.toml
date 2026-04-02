@@ -1,0 +1,32 @@
+[project]
+name = "logistics-inbox-automator"
+version = "0.1.0"
+description = "Gmail logistics inbox automation (CHALLENGE.md)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "agno>=2.5",
+  "anthropic>=0.88",
+  "dramatiq[redis]>=2.1",
+  "fastapi>=0.115",
+  "google-api-python-client>=2.100",
+  "google-auth-oauthlib>=1.2",
+  "google-auth-httplib2>=0.2",
+  "pydantic-settings>=2.0",
+  "sqlalchemy>=2.0",
+  "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
