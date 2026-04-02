@@ -26,6 +26,7 @@ Build a backend service that:
 | API | FastAPI |
 | Agent framework | Agno |
 | LLM | Claude (via Agno) |
+| Agno code | All agent definitions in package **`app/agents/`** (e.g. one module per agent: classification, reply drafting). Workers and services import from there only. |
 | Database | SQLite |
 | Background work | Dramatiq with **two actors**; smallest viable broker for local demo (e.g. in-memory / stub). Document upgrade path to **Redis** for durable, multi-process queues. |
 | Gmail | Gmail API, OAuth2 (`credentials.json` + stored refresh token). |
@@ -55,7 +56,7 @@ Exactly one label per inbound message:
 - **FastAPI:** Health, session query APIs (`GET /sessions`, `GET /sessions/{id}`), optional OAuth callback if using a web OAuth flow.
 - **SQLite:** Sessions (by `gmail_thread_id`), emails, classifications, reply/outbound records, processing status for observability and retries.
 - **Gmail integration module:** List/fetch messages, create/apply labels, send replies in-thread.
-- **Agno:** Two separate agent definitions (or one module with two entrypoints) backing the two LLM calls.
+- **`app/agents/`:** Houses the two Agno agents (classification vs. reply drafting)—separate modules or clearly separated callables; prompts and structured-output schemas stay next to each agent.
 - **Dramatiq:** Two actors with a thin **cron-driven CLI** that lists work and enqueues actor 1 (see §6).
 
 ---
