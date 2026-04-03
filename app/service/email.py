@@ -1,4 +1,4 @@
-"""Inbox processing pipeline (used by Dramatiq actors)."""
+"""Email processing business logic — classification, reply drafting, sending."""
 
 from __future__ import annotations
 
@@ -14,42 +14,14 @@ from app.agents.classification import ClassificationOutput, classify_email_text
 from app.agents.reply import draft_reply
 from app.core.config import get_settings
 from app.core.helpers import utcnow
+from app.core.state import get_last_history_id, set_last_history_id
 from app.db.session import SessionLocal
-from app.domain.categories import CATEGORY_TO_GMAIL_LABEL, EMAIL_CATEGORIES, gmail_label_for_category
-from app.integrations.gmail import GmailClient, get_gmail_client
+from app.domain.categories import EMAIL_CATEGORIES, gmail_label_for_category
+from app.integrations.gmail import get_gmail_client
 from app.integrations.gmail.client import parse_message_resource
 from app.models.orm import ClassificationRecord, EmailRecord, InboxSession
 
 logger = logging.getLogger(__name__)
-
-
-def _enqueue_draft(email_id: int) -> None:
-    """Enqueue reply drafting via Dramatiq."""
-    from app.workers.tasks import draft_and_send_reply
-    draft_and_send_reply.send(email_id)
-
-
-def run_resolve_history(user_email: str, history_id: str) -> None:
-    """Stage 1: resolve a historyId into individual message IDs and enqueue classification."""
-    from app.core.state import get_last_history_id, set_last_history_id
-    from app.workers.tasks import classify_inbound
-
-    settings = get_settings()
-    gmail = get_gmail_client(settings)
-
-    # Use our stored historyId as the baseline, not the one from the notification.
-    # The notification's historyId points at the change itself, so querying from it
-    # returns nothing. We need to query from the last ID we successfully processed.
-    start_id = get_last_history_id() or history_id
-    logger.info("resolve_history: notification_id=%s, using start_id=%s", history_id, start_id)
-
-    message_ids = gmail.history_list(start_id)
-    logger.info("history_id=%s resolved to %d message(s)", start_id, len(message_ids))
-    for mid in message_ids:
-        classify_inbound.send(mid)
-
-    # Advance the stored cursor to the notification's historyId (the latest point)
-    set_last_history_id(history_id)
 
 
 def _thread_context_for_db(db: Session, session_id: int, before_email_id: int | None) -> str:
@@ -102,7 +74,23 @@ def _normalize_classification(raw: ClassificationOutput) -> ClassificationOutput
     return ClassificationOutput(category=cat, missing_fields=mf)
 
 
-def run_classify_inbound(gmail_message_id: str) -> None:
+def resolve_history(user_email: str, history_id: str) -> list[str]:
+    """Resolve a Gmail historyId into individual message IDs."""
+    settings = get_settings()
+    gmail = get_gmail_client(settings)
+
+    start_id = get_last_history_id() or history_id
+    logger.info("resolve_history: notification_id=%s, using start_id=%s", history_id, start_id)
+
+    message_ids = gmail.history_list(start_id)
+    logger.info("history_id=%s resolved to %d message(s)", start_id, len(message_ids))
+
+    set_last_history_id(history_id)
+    return message_ids
+
+
+def classify_inbound(gmail_message_id: str) -> int | None:
+    """Classify an inbound email. Return email_id if it needs a reply, else None."""
     settings = get_settings()
     with SessionLocal() as db:
         try:
@@ -114,27 +102,25 @@ def run_classify_inbound(gmail_message_id: str) -> None:
             )
             if existing and existing.classification:
                 if existing.reply_sent_at or existing.reply_skipped_reason:
-                    return
-                _enqueue_draft(existing.id)
+                    return None
                 db.commit()
-                return
+                return existing.id
 
             try:
                 raw_msg = gmail.get_message(gmail_message_id)
             except HttpError as e:
                 if e.resp.status in (404, 400):
                     logger.warning("Message %s not found (status=%s), skipping", gmail_message_id, e.resp.status)
-                    return
+                    return None
                 raise
             parsed = parse_message_resource(raw_msg)
             thread_id = parsed["thread_id"]
 
-            # Skip messages sent by ourselves (our own replies)
             profile_email = gmail.get_profile_email()
             from_addr = parsed["from_address"]
             if profile_email and profile_email.lower() in from_addr.lower():
                 logger.info("Skipping own message %s", gmail_message_id)
-                return
+                return None
 
             session = db.scalar(select(InboxSession).where(InboxSession.gmail_thread_id == thread_id))
             if not session:
@@ -165,7 +151,7 @@ def run_classify_inbound(gmail_message_id: str) -> None:
                 except IntegrityError:
                     logger.info("Duplicate email %s — already processed", gmail_message_id)
                     db.rollback()
-                    return
+                    return None
             else:
                 email.from_address = parsed["from_address"] or email.from_address
                 email.subject = parsed["subject"] or email.subject
@@ -174,10 +160,9 @@ def run_classify_inbound(gmail_message_id: str) -> None:
             if email.classification:
                 if email.reply_sent_at or email.reply_skipped_reason:
                     db.commit()
-                    return
-                _enqueue_draft(email.id)
+                    return None
                 db.commit()
-                return
+                return email.id
 
             ctx = _thread_context_for_db(db, session.id, before_email_id=email.id)
             current = f"From: {email.from_address}\nSubject: {email.subject}\n\n{email.body_text}"
@@ -202,10 +187,10 @@ def run_classify_inbound(gmail_message_id: str) -> None:
                 email.last_error = f"label: {ex}"
                 logger.exception("Gmail label failed for %s", gmail_message_id)
                 db.commit()
-                return
+                return None
 
-            _enqueue_draft(email.id)
             db.commit()
+            return email.id
         except Exception:
             db.rollback()
             try:
@@ -215,11 +200,12 @@ def run_classify_inbound(gmail_message_id: str) -> None:
                     db.commit()
             except Exception:
                 db.rollback()
-            logger.exception("run_classify_inbound failed for %s", gmail_message_id)
+            logger.exception("classify_inbound failed for %s", gmail_message_id)
             raise
 
 
-def run_draft_and_send_reply(email_id: int) -> None:
+def draft_and_send_reply(email_id: int) -> None:
+    """Draft and send a reply for a classified email."""
     settings = get_settings()
     with SessionLocal() as db:
         try:
@@ -303,7 +289,7 @@ def run_draft_and_send_reply(email_id: int) -> None:
                 logger.exception("mark_read failed for %s", email.gmail_message_id)
         except Exception:
             db.rollback()
-            logger.exception("run_draft_and_send_reply failed for email_id=%s", email_id)
+            logger.exception("draft_and_send_reply failed for email_id=%s", email_id)
             try:
                 email = db.get(EmailRecord, email_id)
                 if email:

@@ -1,3 +1,3 @@
-from app.service.pipeline import run_classify_inbound, run_draft_and_send_reply
+from app.service.email import classify_inbound, draft_and_send_reply
 
-__all__ = ["run_classify_inbound", "run_draft_and_send_reply"]
+__all__ = ["classify_inbound", "draft_and_send_reply"]
