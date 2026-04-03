@@ -3,8 +3,12 @@
 Uses a Redis SET-NX lock with a TTL. If the lock already exists the message
 is acknowledged immediately (dropped), preventing duplicate processing.
 
-Actors opt in by setting ``options={"dedup_key_arg": 0}`` (index of the arg
-used as the dedup key) or ``options={"dedup_key_arg": "kwarg_name"}``.
+Configure via the ``dedup_keys`` dict passed to the constructor::
+
+    RedisDedup(client=redis_client, dedup_keys={
+        "classify_inbound": 0,   # arg index
+        "resolve_history": 1,
+    })
 """
 
 from __future__ import annotations
@@ -21,16 +25,22 @@ DEFAULT_TTL_MS = 10 * 60 * 1000  # 10 minutes
 class RedisDedup(dramatiq.Middleware):
     """Drop duplicate messages based on a Redis lock per (actor, key)."""
 
-    def __init__(self, *, client, ttl_ms: int = DEFAULT_TTL_MS) -> None:
+    def __init__(
+        self,
+        *,
+        client,
+        dedup_keys: dict[str, int | str] | None = None,
+        ttl_ms: int = DEFAULT_TTL_MS,
+    ) -> None:
         self._client = client
         self._ttl_ms = ttl_ms
+        self._dedup_keys: dict[str, int | str] = dedup_keys or {}
 
     def _lock_key(self, actor_name: str, dedup_value: str) -> str:
         return f"dramatiq:dedup:{actor_name}:{dedup_value}"
 
     def before_process_message(self, broker, message):
-        actor = broker.get_actor(message.actor_name)
-        dedup_arg = actor.options.get("dedup_key_arg")
+        dedup_arg = self._dedup_keys.get(message.actor_name)
         if dedup_arg is None:
             return
 

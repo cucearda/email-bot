@@ -7,6 +7,8 @@ from dramatiq.brokers.stub import StubBroker
 from app.core.config import get_settings
 from dramatiq.brokers.redis import RedisBroker
 import redis as redis_lib
+from app.workers.dedup import RedisDedup
+
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +21,14 @@ def setup_broker() -> None:
 
         broker = RedisBroker(url=settings.redis_url)
 
-        from app.workers.dedup import RedisDedup
-        broker.add_middleware(RedisDedup(client=redis_client))
+        broker.add_middleware(RedisDedup(
+            client=redis_client,
+            dedup_keys={
+                "resolve_history": 1,       # keyed on history_id (2nd arg)
+                "classify_inbound": 0,      # keyed on gmail_message_id (1st arg)
+                "draft_and_send_reply": 0,  # keyed on email_id (1st arg)
+            },
+        ))
 
         dramatiq.set_broker(broker)
         logger.info("Dramatiq broker: Redis (%s) with dedup middleware", settings.redis_url)

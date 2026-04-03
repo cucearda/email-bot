@@ -116,16 +116,27 @@ class GmailClient:
         self._label_name_to_id: dict[str, str] = {}
 
     def get_message(self, message_id: str) -> dict[str, Any]:
-        return (
-            self._service.users()
-            .messages()
-            .get(userId=self._user_id, id=message_id, format="full")
-            .execute()
-        )
+        try:
+            return (
+                self._service.users()
+                .messages()
+                .get(userId=self._user_id, id=message_id, format="full")
+                .execute()
+            )
+        except HttpError:
+            logger.error("get_message failed for %s", message_id)
+            raise
+        except Exception:
+            logger.error("get_message unexpected error for %s", message_id, exc_info=True)
+            raise
 
     def _refresh_label_map(self) -> None:
-        res = self._service.users().labels().list(userId=self._user_id).execute()
-        self._label_name_to_id = {l["name"]: l["id"] for l in res.get("labels", [])}
+        try:
+            res = self._service.users().labels().list(userId=self._user_id).execute()
+        except HttpError:
+            logger.error("labels.list failed", exc_info=True)
+            raise
+        self._label_name_to_id = {lab["name"]: lab["id"] for lab in res.get("labels", [])}
 
     def ensure_label_id(self, label_name: str) -> str:
         if not self._label_name_to_id:
@@ -142,24 +153,40 @@ class GmailClient:
         except HttpError as e:
             if e.resp.status == 409:
                 self._refresh_label_map()
-                return self._label_name_to_id[label_name]
+                if label_name in self._label_name_to_id:
+                    return self._label_name_to_id[label_name]
+                logger.error("Label %r not found after 409 refresh", label_name)
+                raise
+            logger.error("labels.create failed for %r (status=%s)", label_name, e.resp.status)
             raise
         self._label_name_to_id[label_name] = created["id"]
         return created["id"]
 
     def add_labels(self, message_id: str, label_names: list[str]) -> None:
         ids = [self.ensure_label_id(n) for n in label_names]
-        self._service.users().messages().modify(
-            userId=self._user_id, id=message_id, body={"addLabelIds": ids}
-        ).execute()
+        try:
+            self._service.users().messages().modify(
+                userId=self._user_id, id=message_id, body={"addLabelIds": ids}
+            ).execute()
+        except HttpError:
+            logger.error("add_labels failed for %s labels=%s", message_id, label_names)
+            raise
 
     def mark_read(self, message_id: str) -> None:
-        self._service.users().messages().modify(
-            userId=self._user_id, id=message_id, body={"removeLabelIds": ["UNREAD"]}
-        ).execute()
+        try:
+            self._service.users().messages().modify(
+                userId=self._user_id, id=message_id, body={"removeLabelIds": ["UNREAD"]}
+            ).execute()
+        except HttpError:
+            logger.error("mark_read failed for %s", message_id)
+            raise
 
     def get_profile_email(self) -> str:
-        prof = self._service.users().getProfile(userId=self._user_id).execute()
+        try:
+            prof = self._service.users().getProfile(userId=self._user_id).execute()
+        except HttpError:
+            logger.error("get_profile failed", exc_info=True)
+            raise
         return prof["emailAddress"]
 
     def watch(self, project_id: str, topic_name: str) -> dict[str, Any]:
@@ -168,11 +195,15 @@ class GmailClient:
             "topicName": f"projects/{project_id}/topics/{topic_name}",
             "labelIds": ["INBOX"],
         }
-        return (
-            self._service.users()
-            .watch(userId=self._user_id, body=body)
-            .execute()
-        )
+        try:
+            return (
+                self._service.users()
+                .watch(userId=self._user_id, body=body)
+                .execute()
+            )
+        except HttpError:
+            logger.error("watch failed for project=%s topic=%s", project_id, topic_name)
+            raise
 
     def history_list(self, start_history_id: str) -> list[str]:
         """Return message IDs added to INBOX since start_history_id."""
@@ -197,6 +228,7 @@ class GmailClient:
                 if e.resp.status == 404:
                     logger.warning("historyId %s expired (404), returning empty", start_history_id)
                     return []
+                logger.error("history.list failed (status=%s) for historyId=%s", e.resp.status, start_history_id)
                 raise
             logger.debug("history_list raw response: historyId=%s, history_count=%d, keys=%s",
                          res.get("historyId"), len(res.get("history", [])), list(res.keys()))
@@ -235,8 +267,12 @@ class GmailClient:
             msg["References"] = references
         msg.set_content(plain_body, subtype="plain", charset="utf-8")
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-        body = {"raw": raw, "threadId": thread_id}
-        sent = self._service.users().messages().send(userId=self._user_id, body=body).execute()
+        send_body = {"raw": raw, "threadId": thread_id}
+        try:
+            sent = self._service.users().messages().send(userId=self._user_id, body=send_body).execute()
+        except HttpError:
+            logger.error("send_reply failed for thread=%s to=%s", thread_id, to_address)
+            raise
         return sent["id"]
 
 

@@ -8,6 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from googleapiclient.errors import HttpError
+
 from app.agents.classification import ClassificationOutput, classify_email_text
 from app.agents.reply import draft_reply
 from app.core.config import get_settings
@@ -112,7 +114,13 @@ def run_classify_inbound(gmail_message_id: str) -> None:
                 db.commit()
                 return
 
-            raw_msg = gmail.get_message(gmail_message_id)
+            try:
+                raw_msg = gmail.get_message(gmail_message_id)
+            except HttpError as e:
+                if e.resp.status in (404, 400):
+                    logger.warning("Message %s not found (status=%s), skipping", gmail_message_id, e.resp.status)
+                    return
+                raise
             parsed = parse_message_resource(raw_msg)
             thread_id = parsed["thread_id"]
 
@@ -127,7 +135,13 @@ def run_classify_inbound(gmail_message_id: str) -> None:
             if not session:
                 session = InboxSession(gmail_thread_id=thread_id)
                 db.add(session)
-                db.flush()
+                try:
+                    db.flush()
+                except IntegrityError:
+                    db.rollback()
+                    session = db.scalar(
+                        select(InboxSession).where(InboxSession.gmail_thread_id == thread_id)
+                    )
 
             email = existing
             if not email:
@@ -242,7 +256,15 @@ def run_draft_and_send_reply(email_id: int) -> None:
             email.reply_draft = body
             db.flush()
 
-            raw_msg = gmail.get_message(email.gmail_message_id)
+            try:
+                raw_msg = gmail.get_message(email.gmail_message_id)
+            except HttpError as e:
+                if e.resp.status in (404, 400):
+                    email.reply_skipped_reason = f"message_gone ({e.resp.status})"
+                    db.commit()
+                    logger.warning("Message %s gone (status=%s), skipping reply", email.gmail_message_id, e.resp.status)
+                    return
+                raise
             p2 = parse_message_resource(raw_msg)
             in_reply = p2.get("rfc_message_id") or ""
 
