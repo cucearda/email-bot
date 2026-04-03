@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 
+from functools import lru_cache
+
 from app.core.config import Settings, get_settings
 from app.domain.categories import EMAIL_CATEGORIES, RFQ_FIELD_KEYS
 
@@ -36,8 +38,9 @@ CLASSIFIER_INSTRUCTIONS = [
 ]
 
 
-def build_classification_agent(settings: Settings | None = None) -> Agent:
-    s = settings or get_settings()
+@lru_cache(maxsize=1)
+def build_classification_agent() -> Agent:
+    s = get_settings()
     return Agent(
         model=Claude(id=s.agno_claude_model, api_key=s.anthropic_api_key or None),
         description="Logistics inbox email classifier.",
@@ -47,7 +50,7 @@ def build_classification_agent(settings: Settings | None = None) -> Agent:
 
 
 def classify_email_text(*, thread_context: str, current_email: str, settings: Settings | None = None) -> ClassificationOutput:
-    agent = build_classification_agent(settings)
+    agent = build_classification_agent()
     user = (
         "Thread context (previous messages in this conversation, oldest first):\n"
         f"{thread_context or '(none)'}\n\n"

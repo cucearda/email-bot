@@ -13,7 +13,7 @@ from app.agents.reply import draft_reply
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.domain.categories import CATEGORY_TO_GMAIL_LABEL, gmail_label_for_category
-from app.integrations.gmail import GmailClient
+from app.integrations.gmail import GmailClient, get_gmail_client
 from app.integrations.gmail.client import parse_message_resource
 from app.models.orm import ClassificationRecord, EmailRecord, InboxSession
 
@@ -25,8 +25,32 @@ def _utcnow() -> datetime:
 
 
 def _enqueue_draft(email_id: int) -> None:
-    """Run reply step inline (no Redis). Swap to ``draft_and_send_reply.send`` when using Redis."""
-    run_draft_and_send_reply(email_id)
+    """Enqueue reply drafting via Dramatiq."""
+    from app.workers.tasks import draft_and_send_reply
+    draft_and_send_reply.send(email_id)
+
+
+def run_resolve_history(user_email: str, history_id: str) -> None:
+    """Stage 1: resolve a historyId into individual message IDs and enqueue classification."""
+    from app.core.state import get_last_history_id, set_last_history_id
+    from app.workers.tasks import classify_inbound
+
+    settings = get_settings()
+    gmail = get_gmail_client(settings)
+
+    # Use our stored historyId as the baseline, not the one from the notification.
+    # The notification's historyId points at the change itself, so querying from it
+    # returns nothing. We need to query from the last ID we successfully processed.
+    start_id = get_last_history_id() or history_id
+    logger.info("resolve_history: notification_id=%s, using start_id=%s", history_id, start_id)
+
+    message_ids = gmail.history_list(start_id)
+    logger.info("history_id=%s resolved to %d message(s)", start_id, len(message_ids))
+    for mid in message_ids:
+        classify_inbound.send(mid)
+
+    # Advance the stored cursor to the notification's historyId (the latest point)
+    set_last_history_id(history_id)
 
 
 def _thread_context_for_db(db: Session, session_id: int, before_email_id: int | None) -> str:
@@ -43,7 +67,7 @@ def _thread_context_for_db(db: Session, session_id: int, before_email_id: int | 
             break
         cat = e.classification.category if e.classification else "unknown"
         parts.append(
-            f"[From: {e.from_address}] [Class: {cat}] Subject: {e.subject}\n{e.body_text[:4000]}"
+            f"[From: {e.from_address}] [Class: {cat}] Subject: {e.subject}\n{e.body_text}"
         )
     return "\n\n---\n\n".join(parts)
 
@@ -75,7 +99,7 @@ def run_classify_inbound(gmail_message_id: str) -> None:
     settings = get_settings()
     db = SessionLocal()
     try:
-        gmail = GmailClient(settings)
+        gmail = get_gmail_client(settings)
         existing = db.scalar(
             select(EmailRecord)
             .where(EmailRecord.gmail_message_id == gmail_message_id)
@@ -188,12 +212,12 @@ def run_draft_and_send_reply(email_id: int) -> None:
             email.reply_skipped_reason = "not_relevant"
             db.commit()
             try:
-                GmailClient(settings).mark_read(email.gmail_message_id)
+                get_gmail_client(settings).mark_read(email.gmail_message_id)
             except Exception:
                 logger.exception("mark_read failed for %s", email.gmail_message_id)
             return
 
-        gmail = GmailClient(settings)
+        gmail = get_gmail_client(settings)
         inbox_session = email.session
         ctx = _thread_context_for_db(db, inbox_session.id, before_email_id=email.id)
         missing = list(clf.missing_rfq_fields or []) if clf.category == "rfq" else []

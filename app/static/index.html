@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inbox Automator</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; display: flex; height: 100vh; }
+
+    /* Sidebar */
+    #sidebar { width: 360px; background: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; flex-shrink: 0; }
+    #sidebar h1 { font-size: 16px; padding: 16px; border-bottom: 1px solid #eee; background: #1a73e8; color: #fff; }
+    #session-list { flex: 1; overflow-y: auto; }
+    .session-item { padding: 12px 16px; border-bottom: 1px solid #eee; cursor: pointer; }
+    .session-item:hover { background: #f0f6ff; }
+    .session-item.active { background: #e3f0ff; border-left: 3px solid #1a73e8; }
+    .session-subject { font-size: 14px; font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .session-meta { font-size: 12px; color: #666; display: flex; justify-content: space-between; align-items: center; }
+
+    /* Category badges */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; color: #fff; }
+    .badge-rfq { background: #e65100; }
+    .badge-booking_request { background: #1565c0; }
+    .badge-tracking_inquiry { background: #2e7d32; }
+    .badge-documentation { background: #6a1b9a; }
+    .badge-complaint { background: #c62828; }
+    .badge-general_inquiry { background: #546e7a; }
+    .badge-not_relevant { background: #9e9e9e; }
+    .badge-null { background: #bdbdbd; }
+
+    /* Detail panel */
+    #detail { flex: 1; overflow-y: auto; padding: 24px; }
+    #detail-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #999; font-size: 18px; }
+    #detail-content { display: none; }
+
+    .detail-header { margin-bottom: 24px; }
+    .detail-header h2 { font-size: 18px; margin-bottom: 8px; }
+    .detail-header .meta { font-size: 13px; color: #666; }
+
+    /* Email cards */
+    .email-card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .email-card h3 { font-size: 14px; margin-bottom: 4px; }
+    .email-from { font-size: 13px; color: #1a73e8; margin-bottom: 4px; }
+    .email-date { font-size: 12px; color: #999; margin-bottom: 10px; }
+    .email-body { font-size: 13px; line-height: 1.5; white-space: pre-wrap; background: #fafafa; padding: 10px; border-radius: 4px; max-height: 200px; overflow-y: auto; }
+
+    /* Classification box */
+    .classification { margin-top: 10px; padding: 8px 12px; background: #f0f6ff; border-radius: 4px; font-size: 13px; }
+    .classification strong { font-size: 12px; color: #555; }
+
+    /* Reply box */
+    .reply-box { margin-top: 10px; padding: 10px 12px; background: #e8f5e9; border-radius: 4px; font-size: 13px; }
+    .reply-box.error { background: #fbe9e7; }
+    .reply-box.skipped { background: #fff3e0; }
+    .reply-body { white-space: pre-wrap; margin-top: 4px; }
+
+    /* Missing fields */
+    .missing-fields { margin-top: 4px; }
+    .missing-tag { display: inline-block; background: #fff3e0; color: #e65100; padding: 1px 6px; border-radius: 4px; font-size: 11px; margin: 2px 2px 0 0; }
+
+    /* Loading */
+    .loading { text-align: center; padding: 40px; color: #999; }
+  </style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>Inbox Automator</h1>
+  <div id="session-list"><div class="loading">Loading sessions...</div></div>
+</div>
+
+<div id="detail">
+  <div id="detail-empty">Select a session to view emails</div>
+  <div id="detail-content"></div>
+</div>
+
+<script>
+const API = '';
+
+function badgeClass(cat) {
+  return 'badge badge-' + (cat || 'null');
+}
+
+function formatCategory(cat) {
+  if (!cat) return 'pending';
+  return cat.replace(/_/g, ' ');
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString();
+}
+
+async function loadSessions() {
+  const list = document.getElementById('session-list');
+  try {
+    const res = await fetch(API + '/sessions?limit=100');
+    const sessions = await res.json();
+    if (sessions.length === 0) {
+      list.innerHTML = '<div class="loading">No sessions yet. Waiting for emails...</div>';
+      return;
+    }
+    list.innerHTML = sessions.map(s => `
+      <div class="session-item" data-id="${s.id}" onclick="loadSession(${s.id}, this)">
+        <div class="session-subject">Thread #${s.id}</div>
+        <div class="session-meta">
+          <span class="${badgeClass(s.latest_category)}">${formatCategory(s.latest_category)}</span>
+          <span>${formatDate(s.updated_at)}</span>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    list.innerHTML = '<div class="loading">Failed to load sessions</div>';
+  }
+}
+
+async function loadSession(id, el) {
+  document.querySelectorAll('.session-item').forEach(e => e.classList.remove('active'));
+  if (el) el.classList.add('active');
+
+  const content = document.getElementById('detail-content');
+  const empty = document.getElementById('detail-empty');
+
+  content.style.display = 'none';
+  empty.style.display = 'flex';
+  empty.textContent = 'Loading...';
+
+  try {
+    const res = await fetch(API + '/sessions/' + id);
+    const s = await res.json();
+
+    empty.style.display = 'none';
+    content.style.display = 'block';
+
+    const firstSubject = s.emails.length > 0 ? s.emails[0].subject : 'No emails';
+
+    content.innerHTML = `
+      <div class="detail-header">
+        <h2>${esc(firstSubject)}</h2>
+        <div class="meta">
+          <span class="${badgeClass(s.latest_category)}">${formatCategory(s.latest_category)}</span>
+          &nbsp; Thread ID: ${esc(s.gmail_thread_id)} &nbsp; | &nbsp; ${s.emails.length} email(s)
+        </div>
+      </div>
+      ${s.emails.map(renderEmail).join('')}
+    `;
+  } catch (e) {
+    empty.textContent = 'Failed to load session';
+  }
+}
+
+function renderEmail(e) {
+  let classificationHtml = '';
+  if (e.classification) {
+    const c = e.classification;
+    let missingHtml = '';
+    if (c.missing_rfq_fields && c.missing_rfq_fields.length > 0) {
+      missingHtml = `<div class="missing-fields">Missing: ${c.missing_rfq_fields.map(f => `<span class="missing-tag">${esc(f)}</span>`).join('')}</div>`;
+    }
+    classificationHtml = `
+      <div class="classification">
+        <strong>Classification:</strong> <span class="${badgeClass(c.category)}">${formatCategory(c.category)}</span>
+        ${missingHtml}
+      </div>`;
+  }
+
+  let replyHtml = '';
+  if (e.last_error) {
+    replyHtml = `<div class="reply-box error"><strong>Error:</strong> ${esc(e.last_error)}</div>`;
+  } else if (e.reply_skipped_reason) {
+    replyHtml = `<div class="reply-box skipped"><strong>Skipped:</strong> ${esc(e.reply_skipped_reason)}</div>`;
+  } else if (e.reply_sent_at) {
+    replyHtml = `<div class="reply-box"><strong>Reply sent:</strong> ${formatDate(e.reply_sent_at)}</div>`;
+  }
+
+  return `
+    <div class="email-card">
+      <h3>${esc(e.subject)}</h3>
+      <div class="email-from">${esc(e.from_address)}</div>
+      <div class="email-date">${formatDate(e.received_at)}</div>
+      <div class="email-body">${esc(e.body_text)}</div>
+      ${classificationHtml}
+      ${replyHtml}
+    </div>`;
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+loadSessions();
+setInterval(loadSessions, 30000);
+</script>
+</body>
+</html>

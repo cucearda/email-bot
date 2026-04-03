@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 
+from functools import lru_cache
+
 from app.core.config import Settings, get_settings
 
 
@@ -23,8 +25,9 @@ REPLY_INSTRUCTIONS = [
 ]
 
 
-def build_reply_agent(settings: Settings | None = None) -> Agent:
-    s = settings or get_settings()
+@lru_cache(maxsize=1)
+def build_reply_agent() -> Agent:
+    s = get_settings()
     return Agent(
         model=Claude(id=s.agno_claude_model, api_key=s.anthropic_api_key or None),
         description="Logistics inbox auto-reply writer.",
@@ -42,7 +45,7 @@ def draft_reply(
     thread_context: str,
     settings: Settings | None = None,
 ) -> str:
-    agent = build_reply_agent(settings)
+    agent = build_reply_agent()
     mf = ", ".join(missing_rfq_fields) if missing_rfq_fields else "(none — sufficient detail)"
     user = (
         f"Category (already decided): {category}\n"

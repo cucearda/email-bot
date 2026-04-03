@@ -33,9 +33,9 @@ def load_credentials(settings: Settings) -> Credentials:
         with open(settings.gmail_token_path, "w", encoding="utf-8") as token:
             token.write(creds.to_json())
         return creds
-    raise RuntimeError(
-        f"No valid Gmail token at {settings.gmail_token_path}. Run: python -m app.cli gmail-auth"
-    )
+    logger.warning("No valid Gmail token — launching OAuth flow")
+    run_oauth_local_server(settings)
+    return Credentials.from_authorized_user_file(settings.gmail_token_path, SCOPES)
 
 
 def run_oauth_local_server(settings: Settings) -> None:
@@ -115,28 +115,6 @@ class GmailClient:
         self._user_id = "me"
         self._label_name_to_id: dict[str, str] = {}
 
-    def list_unread_message_ids(self, max_results: int = 50) -> list[str]:
-        out: list[str] = []
-        page_token = None
-        while len(out) < max_results:
-            req = (
-                self._service.users()
-                .messages()
-                .list(
-                    userId=self._user_id,
-                    q="is:unread in:inbox",
-                    maxResults=min(50, max_results - len(out)),
-                    pageToken=page_token,
-                )
-            )
-            res = req.execute()
-            for m in res.get("messages") or []:
-                out.append(m["id"])
-            page_token = res.get("nextPageToken")
-            if not page_token:
-                break
-        return out[:max_results]
-
     def get_message(self, message_id: str) -> dict[str, Any]:
         return (
             self._service.users()
@@ -176,7 +154,6 @@ class GmailClient:
         ).execute()
 
     def mark_read(self, message_id: str) -> None:
-        """Remove UNREAD so cron does not keep picking up the same message."""
         self._service.users().messages().modify(
             userId=self._user_id, id=message_id, body={"removeLabelIds": ["UNREAD"]}
         ).execute()
@@ -184,6 +161,58 @@ class GmailClient:
     def get_profile_email(self) -> str:
         prof = self._service.users().getProfile(userId=self._user_id).execute()
         return prof["emailAddress"]
+
+    def watch(self, project_id: str, topic_name: str) -> dict[str, Any]:
+        """Register Gmail push notifications via Pub/Sub. Expires after ~7 days."""
+        body = {
+            "topicName": f"projects/{project_id}/topics/{topic_name}",
+            "labelIds": ["INBOX"],
+        }
+        return (
+            self._service.users()
+            .watch(userId=self._user_id, body=body)
+            .execute()
+        )
+
+    def history_list(self, start_history_id: str) -> list[str]:
+        """Return message IDs added to INBOX since start_history_id."""
+        logger.debug("history_list called with startHistoryId=%s", start_history_id)
+        message_ids: list[str] = []
+        page_token = None
+        while True:
+            req = (
+                self._service.users()
+                .history()
+                .list(
+                    userId=self._user_id,
+                    startHistoryId=start_history_id,
+                    historyTypes=["messageAdded"],
+                    labelId="INBOX",
+                    pageToken=page_token,
+                )
+            )
+            try:
+                res = req.execute()
+            except HttpError as e:
+                if e.resp.status == 404:
+                    logger.warning("historyId %s expired (404), returning empty", start_history_id)
+                    return []
+                raise
+            logger.debug("history_list raw response: historyId=%s, history_count=%d, keys=%s",
+                         res.get("historyId"), len(res.get("history", [])), list(res.keys()))
+            for record in res.get("history", []):
+                logger.debug("history record: %s", record)
+                for added in record.get("messagesAdded", []):
+                    mid = added["message"]["id"]
+                    labels = added["message"].get("labelIds", [])
+                    logger.debug("messagesAdded: id=%s labels=%s", mid, labels)
+                    if mid not in message_ids:
+                        message_ids.append(mid)
+            page_token = res.get("nextPageToken")
+            if not page_token:
+                break
+        logger.debug("history_list result: %d message(s) -> %s", len(message_ids), message_ids)
+        return message_ids
 
     def send_reply_in_thread(
         self,
@@ -209,3 +238,21 @@ class GmailClient:
         body = {"raw": raw, "threadId": thread_id}
         sent = self._service.users().messages().send(userId=self._user_id, body=body).execute()
         return sent["id"]
+
+
+_cached_client: GmailClient | None = None
+
+
+def get_gmail_client(settings: Settings | None = None) -> GmailClient:
+    """Return a cached GmailClient, recreating on auth errors."""
+    global _cached_client
+    if _cached_client is None:
+        from app.core.config import get_settings
+        _cached_client = GmailClient(settings or get_settings())
+    return _cached_client
+
+
+def reset_gmail_client() -> None:
+    """Clear cached client (e.g. after auth failure)."""
+    global _cached_client
+    _cached_client = None

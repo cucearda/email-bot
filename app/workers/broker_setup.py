@@ -1,15 +1,15 @@
-"""Configure Dramatiq broker before any actors are defined.
-
-Uses in-memory StubBroker (no Redis). The cron CLI runs the pipeline synchronously
-via ``app.service.pipeline``; actors remain for a future Redis-backed worker setup.
-"""
+"""Configure Dramatiq broker with Redis."""
 
 import dramatiq
-from dramatiq.brokers.stub import StubBroker
+from dramatiq.brokers.redis import RedisBroker
+
+from app.core.config import get_settings
 
 
 def setup_broker() -> None:
-    dramatiq.set_broker(StubBroker())
+    settings = get_settings()
+    broker = RedisBroker(url=settings.redis_url)
+    dramatiq.set_broker(broker)
 
 
 setup_broker()

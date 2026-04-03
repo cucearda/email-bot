@@ -15,6 +15,7 @@ dependencies = [
   "pydantic-settings>=2.0",
   "sqlalchemy>=2.0",
   "uvicorn[standard]>=0.30",
+  "redis>=5.0",
 ]
 
 [project.optional-dependencies]

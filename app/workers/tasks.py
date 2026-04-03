@@ -1,11 +1,16 @@
-"""Dramatiq actors."""
+"""Dramatiq actors — three-stage pipeline."""
 
 from __future__ import annotations
 
 import dramatiq
 
 import app.workers.broker_setup  # noqa: F401 — side effect: set_broker
-from app.service.pipeline import run_classify_inbound, run_draft_and_send_reply
+from app.service.pipeline import run_classify_inbound, run_draft_and_send_reply, run_resolve_history
+
+
+@dramatiq.actor
+def resolve_history(user_email: str, history_id: str) -> None:
+    run_resolve_history(user_email, history_id)
 
 
 @dramatiq.actor
