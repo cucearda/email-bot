@@ -9,7 +9,7 @@ from agno.models.anthropic import Claude
 
 from functools import lru_cache
 
-from app.core.config import Settings, get_settings
+from app.core.config import get_settings
 
 
 class ReplyDraftOutput(BaseModel):
@@ -43,7 +43,6 @@ def draft_reply(
     customer_body: str,
     missing_rfq_fields: list[str],
     thread_context: str,
-    settings: Settings | None = None,
 ) -> str:
     agent = build_reply_agent()
     mf = ", ".join(missing_rfq_fields) if missing_rfq_fields else "(none — sufficient detail)"

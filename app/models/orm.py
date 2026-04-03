@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.helpers import utcnow
 from app.db.base import Base
 
 if TYPE_CHECKING:
     pass
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 class AppState(Base):
@@ -24,7 +21,7 @@ class AppState(Base):
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
 
@@ -34,9 +31,9 @@ class InboxSession(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     gmail_thread_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     latest_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     emails: Mapped[list["EmailRecord"]] = relationship("EmailRecord", back_populates="session")
@@ -74,6 +71,6 @@ class ClassificationRecord(Base):
     category: Mapped[str] = mapped_column(String(64), index=True)
     missing_rfq_fields: Mapped[list | None] = mapped_column(JSON, nullable=True)
     model_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     email: Mapped["EmailRecord"] = relationship("EmailRecord", back_populates="classification")

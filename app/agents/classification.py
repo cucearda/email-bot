@@ -9,12 +9,17 @@ from agno.models.anthropic import Claude
 
 from functools import lru_cache
 
-from app.core.config import Settings, get_settings
-from app.domain.categories import EMAIL_CATEGORIES, RFQ_FIELD_KEYS
+from app.core.config import get_settings
+from app.domain.categories import EMAIL_CATEGORIES, EmailCategory, RFQ_FIELD_KEYS
 
 
 class ClassificationOutput(BaseModel):
-    """Structured classification for one inbound email."""
+    """Structured classification for one inbound email.
+
+    category is str here (not EmailCategory) because the LLM may return
+    aliases like "spam" or "tracking" that get normalized downstream.
+    Use validate_category() after normalization.
+    """
 
     category: str = Field(
         description=f"Exactly one of: {', '.join(EMAIL_CATEGORIES)}",
@@ -49,7 +54,7 @@ def build_classification_agent() -> Agent:
     )
 
 
-def classify_email_text(*, thread_context: str, current_email: str, settings: Settings | None = None) -> ClassificationOutput:
+def classify_email_text(*, thread_context: str, current_email: str) -> ClassificationOutput:
     agent = build_classification_agent()
     user = (
         "Thread context (previous messages in this conversation, oldest first):\n"
