@@ -4,8 +4,9 @@ import logging
 
 import dramatiq
 from dramatiq.brokers.stub import StubBroker
-
 from app.core.config import get_settings
+from dramatiq.brokers.redis import RedisBroker
+import redis as redis_lib
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +14,6 @@ logger = logging.getLogger(__name__)
 def setup_broker() -> None:
     settings = get_settings()
     try:
-        from dramatiq.brokers.redis import RedisBroker
-        import redis as redis_lib
-
         redis_client = redis_lib.Redis.from_url(settings.redis_url)
         redis_client.ping()
 
