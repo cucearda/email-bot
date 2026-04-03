@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -55,6 +55,7 @@ class EmailRecord(Base):
     reply_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reply_skipped_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
     outbound_gmail_message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_outbound: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     session: Mapped["InboxSession"] = relationship("InboxSession", back_populates="emails")
     classification: Mapped["ClassificationRecord | None"] = relationship(

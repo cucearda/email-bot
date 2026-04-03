@@ -64,10 +64,15 @@ def _thread_context_for_db(db: Session, session_id: int, before_email_id: int | 
     for e in rows:
         if before_email_id is not None and e.id == before_email_id:
             break
-        cat = e.classification.category if e.classification else "unknown"
-        parts.append(
-            f"[From: {e.from_address}] [Class: {cat}] Subject: {e.subject}\n{e.body_text}"
-        )
+        if e.is_outbound:
+            parts.append(
+                f"[Our reply] Subject: {e.subject}\n{e.body_text}"
+            )
+        else:
+            cat = e.classification.category if e.classification else "unknown"
+            parts.append(
+                f"[From: {e.from_address}] [Class: {cat}] Subject: {e.subject}\n{e.body_text}"
+            )
     return "\n\n---\n\n".join(parts)
 
 
@@ -279,6 +284,18 @@ def run_draft_and_send_reply(email_id: int) -> None:
             email.outbound_gmail_message_id = sent_id
             email.reply_sent_at = utcnow()
             email.last_error = None
+
+            outbound_record = EmailRecord(
+                session_id=email.session_id,
+                gmail_message_id=sent_id,
+                thread_id=email.thread_id,
+                from_address=gmail.get_profile_email(),
+                subject=email.subject if email.subject.lower().startswith("re:") else f"Re: {email.subject}",
+                body_text=body,
+                received_at=utcnow(),
+                is_outbound=True,
+            )
+            db.add(outbound_record)
             db.commit()
             try:
                 gmail.mark_read(email.gmail_message_id)
