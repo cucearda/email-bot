@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import threading
 from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -276,19 +277,19 @@ class GmailClient:
         return sent["id"]
 
 
-_cached_client: GmailClient | None = None
+_thread_local = threading.local()
 
 
 def get_gmail_client(settings: Settings | None = None) -> GmailClient:
-    """Return a cached GmailClient, recreating on auth errors."""
-    global _cached_client
-    if _cached_client is None:
+    """Return a per-thread cached GmailClient."""
+    client = getattr(_thread_local, "gmail_client", None)
+    if client is None:
         from app.core.config import get_settings
-        _cached_client = GmailClient(settings or get_settings())
-    return _cached_client
+        client = GmailClient(settings or get_settings())
+        _thread_local.gmail_client = client
+    return client
 
 
 def reset_gmail_client() -> None:
-    """Clear cached client (e.g. after auth failure)."""
-    global _cached_client
-    _cached_client = None
+    """Clear cached client for the current thread."""
+    _thread_local.gmail_client = None

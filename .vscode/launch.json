@@ -16,7 +16,7 @@
       "type": "debugpy",
       "request": "launch",
       "module": "dramatiq",
-      "args": ["app.workers.tasks", "--processes", "1", "--threads", "3"],
+      "args": ["app.workers.tasks", "--processes", "1", "--threads", "5"],
       "cwd": "${workspaceFolder}",
       "envFile": "${workspaceFolder}/.env"
     },
