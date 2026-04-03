@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+import threading
+
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-
-from functools import lru_cache
 
 from app.core.config import get_settings
 
@@ -25,7 +25,6 @@ REPLY_INSTRUCTIONS = [
 ]
 
 
-@lru_cache(maxsize=1)
 def build_reply_agent() -> Agent:
     s = get_settings()
     return Agent(
@@ -36,6 +35,18 @@ def build_reply_agent() -> Agent:
     )
 
 
+_thread_local = threading.local()
+
+
+def get_reply_agent() -> Agent:
+    """Return a per-thread cached reply agent."""
+    agent = getattr(_thread_local, "reply_agent", None)
+    if agent is None:
+        agent = build_reply_agent()
+        _thread_local.reply_agent = agent
+    return agent
+
+
 def draft_reply(
     *,
     category: str,
@@ -43,8 +54,10 @@ def draft_reply(
     customer_body: str,
     missing_rfq_fields: list[str],
     thread_context: str,
+    agent: Agent | None = None,
 ) -> str:
-    agent = build_reply_agent()
+    if agent is None:
+        agent = get_reply_agent()
     mf = ", ".join(missing_rfq_fields) if missing_rfq_fields else "(none — sufficient detail)"
     user = (
         f"Category (already decided): {category}\n"

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+import threading
+
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 
-from functools import lru_cache
-
 from app.core.config import get_settings
-from app.domain.categories import EMAIL_CATEGORIES, EmailCategory, RFQ_FIELD_KEYS
+from app.domain.categories import EMAIL_CATEGORIES, RFQ_FIELD_KEYS
 
 
 class ClassificationOutput(BaseModel):
@@ -18,7 +18,6 @@ class ClassificationOutput(BaseModel):
 
     category is str here (not EmailCategory) because the LLM may return
     aliases like "spam" or "tracking" that get normalized downstream.
-    Use validate_category() after normalization.
     """
 
     category: str = Field(
@@ -43,7 +42,6 @@ CLASSIFIER_INSTRUCTIONS = [
 ]
 
 
-@lru_cache(maxsize=1)
 def build_classification_agent() -> Agent:
     s = get_settings()
     return Agent(
@@ -54,8 +52,23 @@ def build_classification_agent() -> Agent:
     )
 
 
-def classify_email_text(*, thread_context: str, current_email: str) -> ClassificationOutput:
-    agent = build_classification_agent()
+_thread_local = threading.local()
+
+
+def get_classification_agent() -> Agent:
+    """Return a per-thread cached classification agent."""
+    agent = getattr(_thread_local, "classification_agent", None)
+    if agent is None:
+        agent = build_classification_agent()
+        _thread_local.classification_agent = agent
+    return agent
+
+
+def classify_email_text(
+    *, thread_context: str, current_email: str, agent: Agent | None = None
+) -> ClassificationOutput:
+    if agent is None:
+        agent = get_classification_agent()
     user = (
         "Thread context (previous messages in this conversation, oldest first):\n"
         f"{thread_context or '(none)'}\n\n"
