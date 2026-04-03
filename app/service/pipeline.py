@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.agents.classification import ClassificationOutput, classify_email_text
@@ -140,7 +141,12 @@ def run_classify_inbound(gmail_message_id: str) -> None:
                     received_at=parsed["received_at"] or utcnow(),
                 )
                 db.add(email)
-                db.flush()
+                try:
+                    db.flush()
+                except IntegrityError:
+                    logger.info("Duplicate email %s — already processed", gmail_message_id)
+                    db.rollback()
+                    return
             else:
                 email.from_address = parsed["from_address"] or email.from_address
                 email.subject = parsed["subject"] or email.subject

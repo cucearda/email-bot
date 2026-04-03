@@ -14,15 +14,23 @@ def setup_broker() -> None:
     settings = get_settings()
     try:
         from dramatiq.brokers.redis import RedisBroker
+        import redis as redis_lib
+
+        redis_client = redis_lib.Redis.from_url(settings.redis_url)
+        redis_client.ping()
+
         broker = RedisBroker(url=settings.redis_url)
-        broker.connection.ping()
+
+        from app.workers.dedup import RedisDedup
+        broker.add_middleware(RedisDedup(client=redis_client))
+
         dramatiq.set_broker(broker)
-        logger.info("Dramatiq broker: Redis (%s)", settings.redis_url)
+        logger.info("Dramatiq broker: Redis (%s) with dedup middleware", settings.redis_url)
     except Exception:
         broker = StubBroker()
         broker.emit_after("process_boot")
         dramatiq.set_broker(broker)
-        logger.warning("Redis unavailable — using StubBroker (tasks run synchronously)")
+        logger.warning("Redis unavailable — using StubBroker (tasks run synchronously, no dedup)")
 
 
 setup_broker()
