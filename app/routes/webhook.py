@@ -7,15 +7,30 @@ import json
 import logging
 
 from fastapi import APIRouter, Request, Response
+from app.core.config import get_settings
 from app.workers.tasks import resolve_history
 
 router = APIRouter(tags=["webhook"])
 logger = logging.getLogger(__name__)
 
 
+def _verify_webhook_token(request: Request) -> bool:
+    """Check the ?token= query param matches the configured webhook secret."""
+    secret = get_settings().webhook_secret
+    if not secret:
+        logger.warning("WEBHOOK_SECRET not configured — webhook is unauthenticated")
+        return True
+    token = request.query_params.get("token", "")
+    return token == secret
+
+
 @router.post("/webhook/gmail")
 async def gmail_push(request: Request) -> Response:
     """Receive Pub/Sub push, enqueue resolve_history, return 200 immediately."""
+
+    if not _verify_webhook_token(request):
+        logger.warning("Webhook request with invalid token — rejected")
+        return Response(status_code=403)
 
     body = await request.json()
     message = body.get("message", {})

@@ -17,6 +17,17 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class AppState(Base):
+    """Single-row key-value store for app-level state (e.g. Gmail historyId)."""
+    __tablename__ = "app_state"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class InboxSession(Base):
     __tablename__ = "sessions"
 

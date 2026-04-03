@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     redis_url: str
     gcp_project_id: str
     pubsub_topic: str
+    webhook_secret: str = ""
 
 
 @lru_cache

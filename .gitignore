@@ -11,3 +11,4 @@ credentials.json
 client_secret*.json
 logistics_inbox_automator.egg-info
 challenge_secrets/
+gmail_history_id.txt
